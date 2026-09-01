@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Tool to search and display files under the brain directory of the
+Antigravity CLI (~/.gemini/antigravity-cli).
+
+The brain directory contains one UUID-named directory per conversation.
+Each *.md file directly under such a directory has a sidecar named
+<filename>.metadata.json (summary, updatedAt, etc). This tool lists and
+displays those files.
+
+Usage:
+    agyfind summary [DIRECTORY]   list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
+    agyfind ls [DIRECTORY]        list md file paths under brain
+    agyfind show N [-n LINES]     show details of summary entry N (content is limited to LINES lines)
+
+If DIRECTORY is given, only conversations belonging to that working
+directory (the ~/... part of a summary line) are shown. In that case the
+workspace is omitted from summary lines (since it would be identical on
+every line).
+
+Sources of information:
+    - brain/<UUID>/<file>.md.metadata.json ... summary, updatedAt (falls back to mtime if absent)
+    - conversation_summaries.db ... mapping from conversation_id to working directory (official source)
+    - history.jsonl ... same mapping from input history, used to fill gaps when the DB
+      has not yet caught up with the latest conversation
+
+Entries are always sorted by updatedAt (converted to JST) in descending
+order. The index number in `agyfind summary` corresponds to this order, so
+it can be passed directly to `agyfind show N`.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sqlite3
+import sys
+import unicodedata
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from . import __version__
+
+BASE_DIR = Path.home() / ".gemini" / "antigravity-cli" / "brain"
+SUMMARIES_DB = Path.home() / ".gemini" / "antigravity-cli" / "conversation_summaries.db"
+HISTORY_JSONL = Path.home() / ".gemini" / "antigravity-cli" / "history.jsonl"
+# Japan has no DST, so JST is represented as a fixed offset without relying on tzdata
+JST = timezone(timedelta(hours=9))
+STAMP_WIDTH = 20  # "YYYY/MM/DD HH:mm:SS "
+# Directly under brain are per-conversation UUID directories. This pattern is
+# used to exclude any other directories/files.
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+
+def display_width(s: str) -> int:
+    # Count terminal display width. East Asian wide/fullwidth characters occupy 2 columns
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def trim(s: str, max_width: int) -> str:
+    if display_width(s) <= max_width:
+        return s
+    out = []
+    w = 0
+    for c in s:
+        cw = 2 if unicodedata.east_asian_width(c) in "WF" else 1
+        # max_width - 3 reserves room for the trailing "..."
+        if w + cw > max_width - 3:
+            break
+        out.append(c)
+        w += cw
+    return "".join(out) + "..."
+
+
+def terminal_width() -> int:
+    # When piped, get_terminal_size() falls back to 80 regardless of the
+    # actual width, causing unwanted trimming. For non-tty output, only use
+    # COLUMNS as a hint; if unset (0), don't trim (print full text)
+    if sys.stdout.isatty():
+        return shutil.get_terminal_size().columns
+    return int(os.environ.get("COLUMNS") or 0)
+
+
+def parse_updated(s: str) -> datetime | None:
+    # Antigravity emits nanosecond-precision timestamps (9 fractional digits),
+    # but fromisoformat only accepts up to 6, so round it down. The "Z"
+    # replacement is for compatibility with Python 3.10 and earlier
+    s = re.sub(r"\.(\d{6})\d+", r".\1", s.replace("Z", "+00:00"))
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def shorten_home(s: str) -> str:
+    home = os.environ.get("HOME")
+    if home and s == home:
+        return "~"
+    # Compare with a trailing "/" so /home/USER doesn't falsely match /home/USER_
+    if home and s.startswith(home + "/"):
+        return "~" + s[len(home):]
+    return s
+
+
+def load_workspaces() -> dict[str, str]:
+    # Build a mapping from conversation_id to working directory.
+    # 1) conversation_summaries.db: the official mapping. workspace_uris is a
+    #    JSON array of file:// URIs, usually with a single element
+    # 2) history.jsonl: the DB may not yet reflect the latest conversation due
+    #    to write timing, so this fills the gap. Entries already in the DB
+    #    take priority over history.jsonl
+    workspaces = {}
+    try:
+        # Open read-only to avoid accidental writes
+        con = sqlite3.connect(f"file:{SUMMARIES_DB}?mode=ro", uri=True)
+        try:
+            rows = con.execute("SELECT conversation_id, workspace_uris FROM conversation_summaries")
+            for cid, uris in rows:
+                try:
+                    uris = json.loads(uris)
+                    workspaces[cid] = uris[0].removeprefix("file://") if uris else ""
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    workspaces[cid] = ""
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError):
+        pass
+    try:
+        with HISTORY_JSONL.open() as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                cid = rec.get("conversationId")
+                ws = rec.get("workspace")
+                if cid and ws and cid not in workspaces:
+                    workspaces[cid] = ws
+    except OSError:
+        pass
+    return workspaces
+
+
+def load_entries() -> list[tuple[datetime, str, Path]]:
+    # Only scan *.md files directly under each conversation directory.
+    # Subdirectories like .system_generated/ or scratch/ hold internal
+    # artifacts (with no metadata) and shouldn't appear in the listing
+    entries = []
+    for conv_dir in BASE_DIR.iterdir():
+        if not conv_dir.is_dir() or not UUID_RE.match(conv_dir.name):
+            continue
+        for p in conv_dir.glob("*.md"):
+            summary = ""
+            updated = None
+            # Antigravity stores summary/updated time and other metadata in a
+            # sidecar named <filename>.metadata.json
+            meta_path = p.with_name(p.name + ".metadata.json")
+            if meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    summary = meta.get("summary") or ""
+                    updated = parse_updated(meta.get("updatedAt") or "")
+                except (OSError, json.JSONDecodeError):
+                    pass
+            # Fall back to the file's mtime if metadata is missing or broken
+            if updated is None:
+                updated = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            entries.append((updated, summary, p))
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return entries
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="agyfind", description="find files in Antigravity CLI artifacts")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    for name, help_text in (
+        ("summary", "show 'YYYY/MM/DD HH:mm:SS summary'"),
+        ("ls", "show file paths"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("directory", nargs="?", default=None, help="filter by workspace directory (e.g. ~/repos/opencode)")
+
+    p = sub.add_parser("show", help="show entry details (head of content)")
+    p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
+    p.add_argument("-n", dest="lines", type=int, default=10, help="number of content lines (default: %(default)s)")
+
+    args = parser.parse_args()
+
+    entries = load_entries()
+    workspaces = load_workspaces()
+    width = terminal_width()
+    # Combined width of the index number (right-aligned) + "." + space + timestamp + space
+    num_width = len(str(len(entries)))
+    prefix_width = num_width + 2 + STAMP_WIDTH
+
+    # The argument filters by the workspace part (the conversation's working
+    # directory) shown in summary lines. expanduser expands ~, and resolve
+    # normalizes a relative path (including . or ..) to an absolute path
+    # before comparison.
+    # In addition to an exact match, descendants of the given directory are
+    # also matched by prefix
+    dir_filter = None
+    # If every matched workspace equals the given directory exactly, showing
+    # it would be redundant, so hide it. If subdirectories are included (i.e.
+    # values differ per line), show it everywhere for clarity.
+    # This is a single flag for the whole output rather than toggled per line
+    show_ws = True
+    if args.command in ("summary", "ls") and args.directory:
+        dir_filter = str(Path(args.directory).expanduser().resolve())
+        entries = [
+            e for e in entries
+            if (ws := workspaces.get(e[2].relative_to(BASE_DIR).parts[0], ""))
+            and (ws == dir_filter or ws.startswith(dir_filter + "/"))
+        ]
+        show_ws = any(workspaces.get(e[2].relative_to(BASE_DIR).parts[0], "") != dir_filter for e in entries)
+
+    # When displaying the workspace, compute the max display width up front
+    # so columns line up across all rows
+    ws_width = 0
+    if args.command == "summary" and show_ws:
+        ws_width = max(
+            (
+                display_width(shorten_home(workspaces.get(p.relative_to(BASE_DIR).parts[0], "")))
+                for _, _, p in entries
+            ),
+            default=0,
+        )
+
+    if args.command == "show":
+        n = args.index
+        if not 1 <= n <= len(entries):
+            print(f"agyfind: index out of range: {n} (1..{len(entries)})", file=sys.stderr)
+            return 1
+        updated, summary, path = entries[n - 1]
+        conv_id = path.relative_to(BASE_DIR).parts[0]
+        ws = shorten_home(workspaces.get(conv_id, ""))
+        print(f"path: {shorten_home(str(path))}")
+        print(f"updated: {updated.astimezone(JST).strftime('%Y/%m/%d %H:%M:%S')} JST")
+        if ws:
+            print(f"workspace: {ws}")
+        print(f"summary: {summary or '-'}")
+        print()
+        try:
+            text = path.read_text(errors="replace")
+        except OSError as exc:
+            print(f"agyfind: cannot read {path}: {exc}", file=sys.stderr)
+            return 1
+        for line in text.splitlines()[: max(0, args.lines)]:
+            print(line)
+        return 0
+
+    try:
+        for i, (updated, summary, p) in enumerate(entries, 1):
+            if args.command == "summary":
+                stamp = updated.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
+                body = summary or p.name
+                if show_ws:
+                    conv_id = p.relative_to(BASE_DIR).parts[0]
+                    ws = shorten_home(workspaces.get(conv_id, ""))
+                    if ws:
+                        # Pad with spaces to align columns by display width
+                        ws_pad = ws + " " * (ws_width - display_width(ws))
+                        body = f"{ws_pad} {body}"
+                # Trim the "directory+title" combination as a whole (padding
+                # spaces for alignment are preserved)
+                if width > prefix_width + 3:
+                    body = trim(body, width - prefix_width)
+                print(f"{i:>{num_width}d}. {stamp} {body}")
+            else:
+                print(shorten_home(str(p)))
+    except BrokenPipeError:
+        # Happens when the pipe is closed early, e.g. by `| head`.
+        # Redirect stdout to devnull to avoid a second BrokenPipeError on
+        # flush at interpreter shutdown
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

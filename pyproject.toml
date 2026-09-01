@@ -1,0 +1,14 @@
+[project]
+name = "agyfind"
+version = "0.1.0"
+description = "Find files in Antigravity CLI artifacts"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+agyfind = "agyfind.__main__:main"
