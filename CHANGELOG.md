@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Discover artifacts by scanning `*.metadata.json` sidecars instead of `*.md` files, so artifacts are no longer limited to the `.md` extension.
+
 ## [0.1.1] - 2026-09-01
 
 ### Changed

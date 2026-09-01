@@ -3,13 +3,14 @@
 (~/.gemini/antigravity-cli).
 
 Artifacts are stored under the brain directory, in one UUID-named directory
-per conversation. Each *.md artifact directly under such a directory has a
-sidecar named <filename>.metadata.json (summary, updatedAt, etc). This tool
+per conversation. Each artifact directly under such a directory has a
+sidecar named <filename>.metadata.json (summary, updatedAt, etc); this is
+how artifacts are discovered, regardless of their own extension. This tool
 lists and displays those artifacts.
 
 Usage:
     agyfind summary [DIRECTORY]   list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
-    agyfind ls [DIRECTORY]        list artifact (md) file paths
+    agyfind ls [DIRECTORY]        list artifact file paths
     agyfind show N [-n LINES]     show details of summary entry N (content is limited to LINES lines)
 
 If DIRECTORY is given, only conversations belonging to that working
@@ -18,7 +19,7 @@ workspace is omitted from summary lines (since it would be identical on
 every line).
 
 Sources of information:
-    - brain/<UUID>/<file>.md.metadata.json ... summary, updatedAt (falls back to mtime if absent)
+    - brain/<UUID>/<file>.metadata.json ... summary, updatedAt (falls back to mtime if absent)
     - conversation_summaries.db ... mapping from conversation_id to working directory (official source)
     - history.jsonl ... same mapping from input history, used to fill gaps when the DB
       has not yet caught up with the latest conversation
@@ -142,27 +143,28 @@ def load_workspaces() -> dict[str, str]:
 
 
 def load_entries() -> list[tuple[datetime, str, Path]]:
-    # Only scan *.md files directly under each conversation directory.
+    # Scan *.metadata.json sidecars directly under each conversation
+    # directory, then resolve the artifact file they describe. This way the
+    # artifact's own extension doesn't matter (not just *.md).
     # Subdirectories like .system_generated/ or scratch/ hold internal
     # artifacts (with no metadata) and shouldn't appear in the listing
     entries = []
     for conv_dir in BASE_DIR.iterdir():
         if not conv_dir.is_dir() or not UUID_RE.match(conv_dir.name):
             continue
-        for p in conv_dir.glob("*.md"):
+        for meta_path in conv_dir.glob("*.metadata.json"):
+            p = meta_path.with_name(meta_path.name.removesuffix(".metadata.json"))
+            if not p.is_file():
+                continue
             summary = ""
             updated = None
-            # Antigravity stores summary/updated time and other metadata in a
-            # sidecar named <filename>.metadata.json
-            meta_path = p.with_name(p.name + ".metadata.json")
-            if meta_path.is_file():
-                try:
-                    meta = json.loads(meta_path.read_text())
-                    summary = meta.get("summary") or ""
-                    updated = parse_updated(meta.get("updatedAt") or "")
-                except (OSError, json.JSONDecodeError):
-                    pass
-            # Fall back to the file's mtime if metadata is missing or broken
+            try:
+                meta = json.loads(meta_path.read_text())
+                summary = meta.get("summary") or ""
+                updated = parse_updated(meta.get("updatedAt") or "")
+            except (OSError, json.JSONDecodeError):
+                pass
+            # Fall back to the file's mtime if updatedAt is missing or broken
             if updated is None:
                 updated = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
             entries.append((updated, summary, p))
