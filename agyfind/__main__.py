@@ -25,8 +25,9 @@ Sources of information:
       has not yet caught up with the latest conversation
 
 Entries are always sorted by updatedAt (converted to JST) in descending
-order. The index number in `agyfind summary` corresponds to this order, so
-it can be passed directly to `agyfind show N`.
+order. The index number in `agyfind summary` reflects this order across the
+full, unfiltered entry list, so it stays valid for `agyfind show N` even
+when `agyfind summary DIRECTORY` narrows what's displayed.
 """
 
 import argparse
@@ -194,8 +195,16 @@ def main() -> int:
     workspaces = load_workspaces()
     width = terminal_width()
     # Combined width of the index number (right-aligned) + "." + space + timestamp + space
+    # Based on the full (unfiltered) entry count, since indices refer to
+    # positions in that list and must stay valid for `show` even when a
+    # directory filter narrows what's displayed here
     num_width = len(str(len(entries)))
     prefix_width = num_width + 2 + STAMP_WIDTH
+
+    # Pair each entry with its 1-based index in the full, unfiltered list.
+    # This index is what `show N` expects, so it must be preserved even when
+    # filtering below narrows which entries are displayed
+    indexed_entries = list(enumerate(entries, 1))
 
     # The argument filters by the workspace part (the conversation's working
     # directory) shown in summary lines. expanduser expands ~, and resolve
@@ -211,12 +220,12 @@ def main() -> int:
     show_ws = True
     if args.command in ("summary", "ls") and args.directory:
         dir_filter = str(Path(args.directory).expanduser().resolve())
-        entries = [
-            e for e in entries
+        indexed_entries = [
+            (i, e) for i, e in indexed_entries
             if (ws := workspaces.get(e[2].relative_to(BASE_DIR).parts[0], ""))
             and (ws == dir_filter or ws.startswith(dir_filter + "/"))
         ]
-        show_ws = any(workspaces.get(e[2].relative_to(BASE_DIR).parts[0], "") != dir_filter for e in entries)
+        show_ws = any(workspaces.get(e[2].relative_to(BASE_DIR).parts[0], "") != dir_filter for _, e in indexed_entries)
 
     # When displaying the workspace, compute the max display width up front
     # so columns line up across all rows
@@ -225,7 +234,7 @@ def main() -> int:
         ws_width = max(
             (
                 display_width(shorten_home(workspaces.get(p.relative_to(BASE_DIR).parts[0], "")))
-                for _, _, p in entries
+                for _, (_, _, p) in indexed_entries
             ),
             default=0,
         )
@@ -254,7 +263,7 @@ def main() -> int:
         return 0
 
     try:
-        for i, (updated, summary, p) in enumerate(entries, 1):
+        for i, (updated, summary, p) in indexed_entries:
             if args.command == "summary":
                 stamp = updated.astimezone(JST).strftime("%Y/%m/%d %H:%M:%S")
                 body = summary or p.name

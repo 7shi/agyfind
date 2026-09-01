@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `agyfind summary DIRECTORY` now shows each entry's index from the full, unfiltered list instead of a filtered index, so it can always be passed directly to `agyfind show N`.
+
 ## [0.2.0] - 2026-09-01
 
 ### Changed
