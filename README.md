@@ -46,6 +46,9 @@ agyfind ls [DIRECTORY]
 
 # Show details of summary entry N (content limited to LINES lines, default all)
 agyfind show N [-n LINES] [--no-pager]
+
+# Render the content as Markdown with rich (no pager)
+agyfind show N --rich
 ```
 
 Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager. Set `PAGER=cat` or pass `--no-pager` to disable it.

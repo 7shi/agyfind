@@ -12,6 +12,7 @@ Usage:
     agyfind summary [DIRECTORY]   list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
     agyfind ls [DIRECTORY]        list artifact file paths
     agyfind show N [-n LINES]     show details of summary entry N (content is limited to LINES lines)
+    agyfind show N --rich         render the content as Markdown with rich (no pager)
 
 Like `git show`, `show` pipes its output through a pager ($PAGER, or less by
 default) when stdout is a terminal. Use --no-pager to disable it.
@@ -225,6 +226,7 @@ def main() -> int:
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
     p.add_argument("-n", dest="lines", type=int, default=None, help="number of content lines (default: all)")
     p.add_argument("--no-pager", action="store_true", help="do not pipe output into a pager")
+    p.add_argument("--rich", action="store_true", help="render content as Markdown with rich (implies --no-pager)")
 
     args = parser.parse_args()
 
@@ -301,6 +303,21 @@ def main() -> int:
         lines = text.splitlines()
         if args.lines is not None:
             lines = lines[: max(0, args.lines)]
+        if args.rich:
+            # Imported lazily so the plain commands don't pay rich's import cost
+            from rich.console import Console
+            from rich.markdown import Markdown
+
+            try:
+                console = Console()
+                # Header lines are plain text: disable markup and highlighting
+                # so brackets or numbers in the summary aren't reinterpreted,
+                # and soft-wrap them so a long path stays on one line
+                console.print("\n".join(out), markup=False, highlight=False, soft_wrap=True)
+                console.print(Markdown("\n".join(lines)))
+            except BrokenPipeError:
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            return 0
         out.extend(lines)
         output = "\n".join(out) + "\n"
         try:

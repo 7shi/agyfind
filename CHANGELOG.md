@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `agyfind show --rich` renders the content as Markdown with rich (without a pager).
+
 ### Changed
 
 - `agyfind show` now pipes its output through a pager (`$PAGER`, default `less` with `LESS=FRX`) when stdout is a terminal, like `git show`, and prints the whole content by default instead of the first 10 lines. Use `--no-pager` to disable the pager; `-n LINES` still limits the content.
