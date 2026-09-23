@@ -291,15 +291,18 @@ def main() -> int:
         except OSError as exc:
             print(f"agyfind: cannot read {path}: {exc}", file=sys.stderr)
             return 1
-        # Build the whole output first so it can be handed to the pager at once
-        out = [
+        # Build the whole output first so it can be handed to the pager at once.
+        # The header is plain "key: value" lines enclosed in "---" (like front
+        # matter, but values are not quoted, so it isn't guaranteed to be YAML)
+        header = [
             f"path: {shorten_home(str(path))}",
-            f"updated: {updated.astimezone(JST).strftime('%Y/%m/%d %H:%M:%S')} JST",
+            f"updated: {updated.astimezone(JST).replace(microsecond=0).isoformat(sep=' ')}",
         ]
         if ws:
-            out.append(f"workspace: {ws}")
-        out.append(f"summary: {summary or '-'}")
-        out.append("")
+            header.append(f"workspace: {ws}")
+        if summary:
+            header.append(f"summary: {summary}")
+        out = ["---", *header, "---", ""]
         lines = text.splitlines()
         if args.lines is not None:
             lines = lines[: max(0, args.lines)]
@@ -307,13 +310,20 @@ def main() -> int:
             # Imported lazily so the plain commands don't pay rich's import cost
             from rich.console import Console
             from rich.markdown import Markdown
+            from rich.rule import Rule
 
             try:
                 console = Console()
-                # Header lines are plain text: disable markup and highlighting
-                # so brackets or numbers in the summary aren't reinterpreted,
-                # and soft-wrap them so a long path stays on one line
-                console.print("\n".join(out), markup=False, highlight=False, soft_wrap=True)
+                # The "---" delimiters are drawn as rules styled like a
+                # Markdown horizontal rule. The header lines between them are
+                # printed as is. Flush so they aren't reordered with rich's
+                # output
+                #hr = Rule(style="markdown.hr", characters="-")
+                hr = Rule(style="markdown.hr")
+                console.print(hr)
+                print("\n".join(header), flush=True)
+                console.print(hr)
+                console.print()
                 console.print(Markdown("\n".join(lines)))
             except BrokenPipeError:
                 os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
