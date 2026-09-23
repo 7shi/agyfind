@@ -1,6 +1,6 @@
 [project]
 name = "agyfind"
-version = "0.3.0"
+version = "0.3.1"
 description = "Find files in Antigravity CLI artifacts"
 readme = "README.md"
 requires-python = ">=3.10"

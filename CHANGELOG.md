@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-24
+
 ### Changed
 
 - `agyfind show` now encloses its header in `---` lines. `updated` is printed as `YYYY-MM-DD HH:MM:SS+09:00`, and `summary` is omitted when empty instead of printing `-`.
