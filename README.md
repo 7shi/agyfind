@@ -44,9 +44,11 @@ agyfind summary ~/repos/opencode
 # List artifact file paths
 agyfind ls [DIRECTORY]
 
-# Show details of summary entry N (content limited to LINES lines, default 10)
-agyfind show N [-n LINES]
+# Show details of summary entry N (content limited to LINES lines, default all)
+agyfind show N [-n LINES] [--no-pager]
 ```
+
+Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager. Set `PAGER=cat` or pass `--no-pager` to disable it.
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
 

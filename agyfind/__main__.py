@@ -13,6 +13,9 @@ Usage:
     agyfind ls [DIRECTORY]        list artifact file paths
     agyfind show N [-n LINES]     show details of summary entry N (content is limited to LINES lines)
 
+Like `git show`, `show` pipes its output through a pager ($PAGER, or less by
+default) when stdout is a terminal. Use --no-pager to disable it.
+
 If DIRECTORY is given, only conversations belonging to that working
 directory (the ~/... part of a summary line) are shown. In that case the
 workspace is omitted from summary lines (since it would be identical on
@@ -36,6 +39,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -81,6 +85,38 @@ def terminal_width() -> int:
     if sys.stdout.isatty():
         return shutil.get_terminal_size().columns
     return int(os.environ.get("COLUMNS") or 0)
+
+
+def page(text: str) -> None:
+    # Mimic git: only page when stdout is a terminal, and let an empty PAGER
+    # or "cat" mean "no pager". LESS=FRX makes less exit immediately if the
+    # text fits on one screen (F), keep ANSI colors raw (R), and not clear the
+    # screen on exit (X). Respect a user-set LESS as git does
+    pager = os.environ.get("PAGER", "less")
+    if not sys.stdout.isatty() or pager.strip() in ("", "cat"):
+        sys.stdout.write(text)
+        return
+    env = dict(os.environ)
+    env.setdefault("LESS", "FRX")
+    try:
+        # shell=True so PAGER may carry arguments (e.g. "less -S")
+        proc = subprocess.Popen(pager, shell=True, stdin=subprocess.PIPE, env=env)
+    except OSError:
+        sys.stdout.write(text)
+        return
+    try:
+        proc.stdin.write(text.encode(sys.stdout.encoding or "utf-8", errors="replace"))
+        proc.stdin.close()
+    except BrokenPipeError:
+        # The user quit the pager before reading everything
+        pass
+    # Ctrl-C belongs to the pager while it runs; keep waiting for it to exit
+    while True:
+        try:
+            proc.wait()
+            break
+        except KeyboardInterrupt:
+            pass
 
 
 def parse_updated(s: str) -> datetime | None:
@@ -187,7 +223,8 @@ def main() -> int:
 
     p = sub.add_parser("show", help="show entry details (head of content)")
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
-    p.add_argument("-n", dest="lines", type=int, default=10, help="number of content lines (default: %(default)s)")
+    p.add_argument("-n", dest="lines", type=int, default=None, help="number of content lines (default: all)")
+    p.add_argument("--no-pager", action="store_true", help="do not pipe output into a pager")
 
     args = parser.parse_args()
 
@@ -247,19 +284,32 @@ def main() -> int:
         updated, summary, path = entries[n - 1]
         conv_id = path.relative_to(BASE_DIR).parts[0]
         ws = shorten_home(workspaces.get(conv_id, ""))
-        print(f"path: {shorten_home(str(path))}")
-        print(f"updated: {updated.astimezone(JST).strftime('%Y/%m/%d %H:%M:%S')} JST")
-        if ws:
-            print(f"workspace: {ws}")
-        print(f"summary: {summary or '-'}")
-        print()
         try:
             text = path.read_text(errors="replace")
         except OSError as exc:
             print(f"agyfind: cannot read {path}: {exc}", file=sys.stderr)
             return 1
-        for line in text.splitlines()[: max(0, args.lines)]:
-            print(line)
+        # Build the whole output first so it can be handed to the pager at once
+        out = [
+            f"path: {shorten_home(str(path))}",
+            f"updated: {updated.astimezone(JST).strftime('%Y/%m/%d %H:%M:%S')} JST",
+        ]
+        if ws:
+            out.append(f"workspace: {ws}")
+        out.append(f"summary: {summary or '-'}")
+        out.append("")
+        lines = text.splitlines()
+        if args.lines is not None:
+            lines = lines[: max(0, args.lines)]
+        out.extend(lines)
+        output = "\n".join(out) + "\n"
+        try:
+            if args.no_pager:
+                sys.stdout.write(output)
+            else:
+                page(output)
+        except BrokenPipeError:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
 
     try:
