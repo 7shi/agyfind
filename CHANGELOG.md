@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+
 ### Added
 
 - `agyfind show --no-rich` prints the content as plain text (the previous default behavior).
