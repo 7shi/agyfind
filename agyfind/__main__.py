@@ -11,11 +11,14 @@ lists and displays those artifacts.
 Usage:
     agyfind summary [DIRECTORY]   list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
     agyfind ls [DIRECTORY]        list artifact file paths
-    agyfind show N [-n LINES]     show details of summary entry N (content is limited to LINES lines)
-    agyfind show N --rich         render the content as Markdown with rich (no pager)
+    agyfind show N [-n LINES] [--no-pager] [--no-rich]
+                                  show details of summary entry N (content is limited to LINES lines)
 
-Like `git show`, `show` pipes its output through a pager ($PAGER, or less by
-default) when stdout is a terminal. Use --no-pager to disable it.
+`show` renders the content as Markdown with rich and, like `git show`, pipes
+it through a pager ($PAGER, or less by default) when stdout is a terminal.
+When paging, colors are always emitted. Use --no-pager to print directly
+(rich then decides whether to use colors); this is implied when stdout is
+piped or redirected. Use --no-rich to print plain text.
 
 If DIRECTORY is given, only conversations belonging to that working
 directory (the ~/... part of a summary line) are shown. In that case the
@@ -210,6 +213,36 @@ def load_entries() -> list[tuple[datetime, str, Path]]:
     return entries
 
 
+def show_rich(header: list[str], lines: list[str], force_terminal: bool = False) -> str | None:
+    # Render the header and content with rich. With force_terminal, the
+    # output is captured and returned as a string (with ANSI colors) instead
+    # of being printed.
+    # Imported lazily so the plain commands don't pay rich's import cost
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.rule import Rule
+
+    console = Console(force_terminal=True) if force_terminal else Console()
+    # The "---" delimiters are drawn as rules styled like a Markdown
+    # horizontal rule. The header lines between them are printed as is
+    #hr = Rule(style="markdown.hr", characters="-")
+    hr = Rule(style="markdown.hr")
+
+    def render() -> None:
+        console.print(hr)
+        console.out("\n".join(header), highlight=False)
+        console.print(hr)
+        console.print()
+        console.print(Markdown("\n".join(lines)))
+
+    if not force_terminal:
+        render()
+        return None
+    with console.capture() as capture:
+        render()
+    return capture.get()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="agyfind", description="find files in Antigravity CLI artifacts")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -226,7 +259,7 @@ def main() -> int:
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
     p.add_argument("-n", dest="lines", type=int, default=None, help="number of content lines (default: all)")
     p.add_argument("--no-pager", action="store_true", help="do not pipe output into a pager")
-    p.add_argument("--rich", action="store_true", help="render content as Markdown with rich (implies --no-pager)")
+    p.add_argument("--no-rich", action="store_true", help="print plain text instead of rendering Markdown with rich")
 
     args = parser.parse_args()
 
@@ -306,35 +339,23 @@ def main() -> int:
         lines = text.splitlines()
         if args.lines is not None:
             lines = lines[: max(0, args.lines)]
-        if args.rich:
-            # Imported lazily so the plain commands don't pay rich's import cost
-            from rich.console import Console
-            from rich.markdown import Markdown
-            from rich.rule import Rule
-
-            try:
-                console = Console()
-                # The "---" delimiters are drawn as rules styled like a
-                # Markdown horizontal rule. The header lines between them are
-                # printed as is. Flush so they aren't reordered with rich's
-                # output
-                #hr = Rule(style="markdown.hr", characters="-")
-                hr = Rule(style="markdown.hr")
-                console.print(hr)
-                print("\n".join(header), flush=True)
-                console.print(hr)
-                console.print()
-                console.print(Markdown("\n".join(lines)))
-            except BrokenPipeError:
-                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-            return 0
-        out.extend(lines)
-        output = "\n".join(out) + "\n"
+        # Like git, don't page when stdout is piped or redirected
+        no_pager = args.no_pager or not sys.stdout.isatty()
         try:
-            if args.no_pager:
-                sys.stdout.write(output)
+            if args.no_rich:
+                out.extend(lines)
+                output = "\n".join(out) + "\n"
+                if no_pager:
+                    sys.stdout.write(output)
+                else:
+                    page(output)
+            elif no_pager:
+                # Print directly with rich, letting it detect the terminal
+                show_rich(header, lines)
             else:
-                page(output)
+                # Render with rich into a string with colors forced on, and
+                # hand it to the pager (less -R shows them)
+                page(show_rich(header, lines, force_terminal=True))
         except BrokenPipeError:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0

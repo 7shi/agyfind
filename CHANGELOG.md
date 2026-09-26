@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `agyfind show --no-rich` prints the content as plain text (the previous default behavior).
+
+### Changed
+
+- `agyfind show` now renders the content as Markdown with rich by default, both through the pager (colors always emitted) and with `--no-pager`.
+- `--no-pager` is implied when stdout is piped or redirected; the output is still rendered with rich but without color codes. Use `--no-rich` to get the raw content.
+
+### Removed
+
+- `agyfind show --rich`, which is now the default (use `--no-pager` for the same output).
+
 ## [0.3.1] - 2026-09-24
 
 ### Changed

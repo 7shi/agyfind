@@ -45,15 +45,14 @@ agyfind summary ~/repos/opencode
 agyfind ls [DIRECTORY]
 
 # Show details of summary entry N (content limited to LINES lines, default all)
-agyfind show N [-n LINES] [--no-pager]
-
-# Render the content as Markdown with rich (no pager)
-agyfind show N --rich
+agyfind show N [-n LINES] [--no-pager] [--no-rich]
 ```
 
-`agyfind show` prints a header of `key: value` lines (`path`, `updated`, `workspace`, `summary`) enclosed in `---`, followed by the content.
+`agyfind show` prints a header of `key: value` lines (`path`, `updated`, `workspace`, `summary`) enclosed in `---`, followed by the content. The content is rendered as Markdown with rich, and the `---` delimiters are drawn as rules. Pass `--no-rich` to print the raw content as plain text instead.
 
-Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager. Set `PAGER=cat` or pass `--no-pager` to disable it.
+Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal, with colors always emitted. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager and colors are shown. Set `PAGER=cat` to disable the pager (colors are still emitted).
+
+Pass `--no-pager` to print directly without the pager; rich then decides whether to use colors. `--no-pager` is implied when stdout is piped or redirected (e.g. `agyfind show 1 | less`), so the output is still rendered with rich but contains no color codes. Use `--no-rich` to get the raw content there (e.g. for `grep`).
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
 
