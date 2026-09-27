@@ -56,10 +56,11 @@ Pass `--no-pager` to print directly without the pager; rich then decides whether
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
 
-Entries are always sorted by `updatedAt` (converted to JST) in descending order. The index number shown by `agyfind summary` corresponds to this order, so it can be passed directly to `agyfind show N`.
+Entries are always sorted by the artifact file's mtime (converted to JST) in descending order. The index number shown by `agyfind summary` corresponds to this order, so it can be passed directly to `agyfind show N`.
 
 ## Sources of information
 
-- `brain/<UUID>/<file>.metadata.json` — summary, updatedAt (falls back to file mtime if absent)
+- `brain/<UUID>/<file>.metadata.json` — summary
+- `brain/<UUID>/<file>` — the artifact itself; its mtime is used as the update time (`updatedAt` in the metadata is not refreshed on edits, so it is ignored)
 - `conversation_summaries.db` — mapping from conversation ID to working directory (official source)
 - `history.jsonl` — same mapping from input history, used to fill gaps when the DB has not yet caught up with the latest conversation

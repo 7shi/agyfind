@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Entries are now dated and sorted by the artifact file's mtime instead of `updatedAt` in its metadata, which is not refreshed when the artifact is edited. This affects the timestamps and order in `agyfind summary`, the index numbers used by `agyfind show N`, and the `updated` header in `agyfind show`.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

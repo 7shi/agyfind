@@ -26,12 +26,14 @@ workspace is omitted from summary lines (since it would be identical on
 every line).
 
 Sources of information:
-    - brain/<UUID>/<file>.metadata.json ... summary, updatedAt (falls back to mtime if absent)
+    - brain/<UUID>/<file>.metadata.json ... summary
+    - brain/<UUID>/<file> ... the artifact itself; its mtime is used as the update time
+      (updatedAt in the metadata is not refreshed on edits, so it is ignored)
     - conversation_summaries.db ... mapping from conversation_id to working directory (official source)
     - history.jsonl ... same mapping from input history, used to fill gaps when the DB
       has not yet caught up with the latest conversation
 
-Entries are always sorted by updatedAt (converted to JST) in descending
+Entries are always sorted by the artifact's mtime (converted to JST) in descending
 order. The index number in `agyfind summary` reflects this order across the
 full, unfiltered entry list, so it stays valid for `agyfind show N` even
 when `agyfind summary DIRECTORY` narrows what's displayed.
@@ -123,17 +125,6 @@ def page(text: str) -> None:
             pass
 
 
-def parse_updated(s: str) -> datetime | None:
-    # Antigravity emits nanosecond-precision timestamps (9 fractional digits),
-    # but fromisoformat only accepts up to 6, so round it down. The "Z"
-    # replacement is for compatibility with Python 3.10 and earlier
-    s = re.sub(r"\.(\d{6})\d+", r".\1", s.replace("Z", "+00:00"))
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
-
-
 def shorten_home(s: str) -> str:
     home = os.environ.get("HOME")
     if home and s == home:
@@ -198,16 +189,14 @@ def load_entries() -> list[tuple[datetime, str, Path]]:
             if not p.is_file():
                 continue
             summary = ""
-            updated = None
             try:
                 meta = json.loads(meta_path.read_text())
                 summary = meta.get("summary") or ""
-                updated = parse_updated(meta.get("updatedAt") or "")
             except (OSError, json.JSONDecodeError):
                 pass
-            # Fall back to the file's mtime if updatedAt is missing or broken
-            if updated is None:
-                updated = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            # Use the artifact's own mtime: updatedAt in the metadata is not
+            # refreshed when the artifact is edited
+            updated = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
             entries.append((updated, summary, p))
     entries.sort(key=lambda e: e[0], reverse=True)
     return entries
