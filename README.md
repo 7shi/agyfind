@@ -46,6 +46,9 @@ agyfind ls [DIRECTORY]
 
 # Show details of summary entry N (content limited to LINES lines, default all)
 agyfind show N [-n LINES] [--no-pager] [--no-rich]
+
+# Copy the content of entry N to the clipboard
+agyfind copy N [-n LINES] [--show] [--zenn]
 ```
 
 `agyfind show` prints a header of `key: value` lines (`path`, `updated`, `workspace`, `summary`) enclosed in `---`, followed by the content. The content is rendered as Markdown with rich, and the `---` delimiters are drawn as rules. Pass `--no-rich` to print the raw content as plain text instead.
@@ -53,6 +56,8 @@ agyfind show N [-n LINES] [--no-pager] [--no-rich]
 Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal, with colors always emitted. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager and colors are shown. Set `PAGER=cat` to disable the pager (colors are still emitted).
 
 Pass `--no-pager` to print directly without the pager; rich then decides whether to use colors. `--no-pager` is implied when stdout is piped or redirected (e.g. `agyfind show 1 | less`), so the output is still rendered with rich but contains no color codes. Use `--no-rich` to get the raw content there (e.g. for `grep`).
+
+`agyfind copy` puts the content shown by `agyfind show --no-rich`, without the `---` header and with trailing blank lines stripped, on the clipboard using `wl-copy` (it must be installed; pyperclip is not used because it is unreliable in some environments). Local links (`file:///...`) that point into a git repository with a GitHub remote are rewritten to GitHub web URLs such as `https://github.com/OWNER/REPO/blob/BRANCH/path#L10-L20`, so the text can be shared as is. `origin` is preferred when several remotes point to GitHub. `BRANCH` is the branch currently checked out in that repository, which is assumed to have been pushed (in detached HEAD state, `HEAD`, i.e. the default branch, is used instead). Other `file:///` links are removed, keeping only the link text (e.g. `[models.json](file:///home/USER/.cache/models.json)` becomes `models.json`), since they are meaningless outside your machine; bare `file:///` URLs that are not links are left unchanged. Pass `--show` to also print the copied text (through the pager when stdout is a terminal) to check the rewritten links. Pass `--zenn` to convert GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, etc.) to Zenn's `:::message` blocks (`:::message alert` for `WARNING`).
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
 

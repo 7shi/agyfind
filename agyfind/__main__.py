@@ -13,12 +13,24 @@ Usage:
     agyfind ls [DIRECTORY]        list artifact file paths
     agyfind show N [-n LINES] [--no-pager] [--no-rich]
                                   show details of summary entry N (content is limited to LINES lines)
+    agyfind copy N [-n LINES] [--show] [--zenn]
+                                  copy the content of entry N to the clipboard
 
 `show` renders the content as Markdown with rich and, like `git show`, pipes
 it through a pager ($PAGER, or less by default) when stdout is a terminal.
 When paging, colors are always emitted. Use --no-pager to print directly
 (rich then decides whether to use colors); this is implied when stdout is
 piped or redirected. Use --no-rich to print plain text.
+
+`copy` puts the content shown by `show --no-rich` (without the header, and
+with trailing whitespace stripped) on the clipboard via wl-copy (pyperclip is
+unreliable in some environments). Local links (file:///...) pointing into a
+git repository with a GitHub remote are rewritten to the corresponding GitHub
+web URL, so the text can be shared as is. Other Markdown links to file:///...
+are dropped, keeping only their text. With --show, the copied text is also
+printed (through the pager, as with `show`). With --zenn, GitHub alerts
+(> [!NOTE] etc.) are converted to Zenn's :::message (:::message alert for
+WARNING).
 
 If DIRECTORY is given, only conversations belonging to that working
 directory (the ~/... part of a summary line) are shown. In that case the
@@ -48,6 +60,7 @@ import sqlite3
 import subprocess
 import sys
 import unicodedata
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -62,6 +75,15 @@ STAMP_WIDTH = 20  # "YYYY/MM/DD HH:mm:SS "
 # Directly under brain are per-conversation UUID directories. This pattern is
 # used to exclude any other directories/files.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+# A file:// URL as it appears in Markdown: bare, in (...) of a link, or in <...>
+FILE_URL_RE = re.compile(r"file://[^\s()<>\[\]\"'`]+")
+# A Markdown link to a file:// URL: [text](file:///...)
+FILE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\((" + FILE_URL_RE.pattern + r")\)")
+# Remote URLs of GitHub, e.g. git@github.com:OWNER/REPO.git,
+# https://github.com/OWNER/REPO.git or ssh://git@github.com/OWNER/REPO
+# The first line of a GitHub alert, e.g. "> [!NOTE]"
+ALERT_RE = re.compile(r"^>\s*\[!([A-Za-z]+)\]\s*$")
+GITHUB_REMOTE_RE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
 
 
 def display_width(s: str) -> int:
@@ -123,6 +145,112 @@ def page(text: str) -> None:
             break
         except KeyboardInterrupt:
             pass
+
+
+def git(cwd: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+    except OSError:
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def github_repo(toplevel: Path) -> str | None:
+    # Return "https://github.com/OWNER/REPO" for a repository whose remote is
+    # on GitHub. origin is preferred; otherwise the first GitHub remote wins
+    out = git(toplevel, "remote", "-v")
+    if not out:
+        return None
+    urls = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and (m := GITHUB_REMOTE_RE.search(parts[1])):
+            urls.setdefault(parts[0], f"https://github.com/{m[1]}/{m[2]}")
+    return urls.get("origin") or next(iter(urls.values()), None)
+
+
+def github_links(text: str) -> str:
+    # Rewrite file:// URLs pointing into a git repository with a GitHub remote
+    # to the GitHub web URL on the currently checked-out branch, assuming it
+    # has been pushed. In detached HEAD state there is no branch name, so HEAD
+    # (the default branch on GitHub) is used instead.
+    # Fragments like #L10-L20 use the same format on GitHub and are kept.
+    # A Markdown link whose URL can't be mapped is useless outside this
+    # machine, so the link is dropped and only its text is kept. Other
+    # (bare) URLs that can't be mapped are left untouched
+    cache: dict[Path, tuple[Path, str, str] | None] = {}
+
+    def to_github(url: str) -> str | None:
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.netloc not in ("", "localhost"):
+            return None
+        path = Path(urllib.parse.unquote(parsed.path))
+        # The file may have been moved or deleted since; look up the repository
+        # from the nearest existing directory
+        d = path if path.is_dir() else path.parent
+        while not d.is_dir() and d != d.parent:
+            d = d.parent
+        if d not in cache:
+            top = git(d, "rev-parse", "--show-toplevel")
+            repo = github_repo(Path(top)) if top else None
+            branch = (git(d, "branch", "--show-current") or "HEAD") if repo else ""
+            cache[d] = (Path(top), repo, branch) if repo else None
+        if not cache[d]:
+            return None
+        top, repo, branch = cache[d]
+        # toplevel is a real path, so resolve symlinks in the link as well
+        try:
+            rel = Path(os.path.realpath(path)).relative_to(top)
+        except ValueError:
+            return None
+        kind = "tree" if path.is_dir() else "blob"
+        out = f"{repo}/{kind}/{urllib.parse.quote(branch)}"
+        if rel.parts:
+            out += "/" + urllib.parse.quote(rel.as_posix())
+        if parsed.fragment:
+            out += "#" + parsed.fragment
+        return out
+
+    def repl_link(m: re.Match) -> str:
+        gh = to_github(m[2])
+        return f"[{m[1]}]({gh})" if gh else m[1]
+
+    def repl_url(m: re.Match) -> str:
+        return to_github(m[0]) or m[0]
+
+    return FILE_URL_RE.sub(repl_url, FILE_LINK_RE.sub(repl_link, text))
+
+
+def zenn_alerts(text: str) -> str:
+    # Convert GitHub alerts to Zenn's message blocks:
+    #   > [!NOTE]          :::message
+    #   > body       ->    body
+    #                      :::
+    # WARNING becomes ":::message alert" (Zenn's warning style). The alert ends at the first line that doesn't start with ">". Lines
+    # inside fenced code blocks are left as is
+    out = []
+    fence = None
+    in_alert = False
+    for line in text.splitlines():
+        if in_alert:
+            if line.startswith(">"):
+                out.append(line[2:] if line.startswith("> ") else line[1:])
+                continue
+            out.append(":::")
+            in_alert = False
+        if fence:
+            if line.startswith(fence):
+                fence = None
+        elif line.startswith(("```", "~~~")):
+            fence = line[:3]
+        elif m := ALERT_RE.match(line):
+            out.append(":::message alert" if m[1].upper() == "WARNING" else ":::message")
+            in_alert = True
+            continue
+        out.append(line)
+    if in_alert:
+        out.append(":::")
+    return "\n".join(out) + "\n"
 
 
 def shorten_home(s: str) -> str:
@@ -250,6 +378,12 @@ def main() -> int:
     p.add_argument("--no-pager", action="store_true", help="do not pipe output into a pager")
     p.add_argument("--no-rich", action="store_true", help="print plain text instead of rendering Markdown with rich")
 
+    p = sub.add_parser("copy", help="copy entry details to the clipboard (file:// links become GitHub URLs)")
+    p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
+    p.add_argument("-n", dest="lines", type=int, default=None, help="number of content lines (default: all)")
+    p.add_argument("--show", action="store_true", help="also print the copied text")
+    p.add_argument("--zenn", action="store_true", help="convert GitHub alerts (> [!NOTE] etc.) to Zenn's :::message")
+
     args = parser.parse_args()
 
     entries = load_entries()
@@ -300,7 +434,7 @@ def main() -> int:
             default=0,
         )
 
-    if args.command == "show":
+    if args.command in ("show", "copy"):
         n = args.index
         if not 1 <= n <= len(entries):
             print(f"agyfind: index out of range: {n} (1..{len(entries)})", file=sys.stderr)
@@ -328,6 +462,25 @@ def main() -> int:
         lines = text.splitlines()
         if args.lines is not None:
             lines = lines[: max(0, args.lines)]
+        if args.command == "copy":
+            # Only the content is copied, without the header, so it can be
+            # pasted into another document as is
+            output = github_links("\n".join(lines))
+            if args.zenn:
+                output = zenn_alerts(output)
+            output = output.rstrip() + "\n"
+            try:
+                subprocess.run(["wl-copy"], input=output.encode(), check=True)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"agyfind: wl-copy failed: {exc}", file=sys.stderr)
+                return 1
+            print(f"agyfind: copied entry {n} to the clipboard", file=sys.stderr)
+            if args.show:
+                try:
+                    page(output)
+                except BrokenPipeError:
+                    os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            return 0
         # Like git, don't page when stdout is piped or redirected
         no_pager = args.no_pager or not sys.stdout.isatty()
         try:
