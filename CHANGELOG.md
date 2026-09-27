@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-27
+
 ### Added
 
 - `agyfind copy N [-n LINES] [--show] [--zenn]` copies the content of an entry (as shown by `agyfind show --no-rich`, without the header) to the clipboard via `wl-copy`, rewriting `file:///` links inside git repositories with a GitHub remote to GitHub web URLs and dropping other `file:///` links (keeping their text). `--show` also prints the copied text, and `--zenn` converts GitHub alerts to Zenn's `:::message` (`:::message alert` for `WARNING`).
