@@ -35,8 +35,12 @@ uv sync
 ## Usage
 
 ```bash
-# List entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
+# List the latest 20 entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
 agyfind summary
+
+# Change the number of entries, or show all of them
+agyfind summary -n 50
+agyfind summary -a
 
 # Filter by working directory (also matches subdirectories)
 agyfind summary ~/repos/opencode
@@ -58,6 +62,8 @@ Like `git show`, `agyfind show` pipes its output through a pager when stdout is 
 Pass `--no-pager` to print directly without the pager; rich then decides whether to use colors. `--no-pager` is implied when stdout is piped or redirected (e.g. `agyfind show 1 | less`), so the output is still rendered with rich but contains no color codes. Use `--no-rich` to get the raw content there (e.g. for `grep`).
 
 `agyfind copy` puts the content shown by `agyfind show --no-rich`, without the `---` header and with trailing blank lines stripped, on the clipboard using `wl-copy` (it must be installed; pyperclip is not used because it is unreliable in some environments). Local links (`file:///...`) that point into a git repository with a GitHub remote are rewritten to GitHub web URLs such as `https://github.com/OWNER/REPO/blob/BRANCH/path#L10-L20`, so the text can be shared as is. `origin` is preferred when several remotes point to GitHub. `BRANCH` is the branch currently checked out in that repository, which is assumed to have been pushed (in detached HEAD state, `HEAD`, i.e. the default branch, is used instead). Other `file:///` links are removed, keeping only the link text (e.g. `[models.json](file:///home/USER/.cache/models.json)` becomes `models.json`), since they are meaningless outside your machine; bare `file:///` URLs that are not links are left unchanged. Pass `--show` to also print the copied text (through the pager when stdout is a terminal) to check the rewritten links. Pass `--zenn` to convert GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, etc.) to Zenn's `:::message` blocks (`:::message alert` for `WARNING`).
+
+`agyfind summary` shows the latest 20 entries by default. Use `-n COUNT` to change the number, or `-a`/`--all` to show every entry. The limit is applied after the `DIRECTORY` filter, so it counts the displayed lines. When some entries are not shown, a last line such as `... showing 20 of 56 (use -n COUNT or -a to show more)` tells how many are shown out of the total.
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
 

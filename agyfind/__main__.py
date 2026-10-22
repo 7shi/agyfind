@@ -9,7 +9,10 @@ how artifacts are discovered, regardless of their own extension. This tool
 lists and displays those artifacts.
 
 Usage:
-    agyfind summary [DIRECTORY]   list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
+    agyfind summary [DIRECTORY] [-n COUNT | -a]
+                                  list entries as "N. YYYY/MM/DD HH:mm:SS [workspace] summary"
+                                  (the latest 20 by default; -n sets the count, -a shows all)
+                                  (if entries are omitted, the shown and total counts are printed)
     agyfind ls [DIRECTORY]        list artifact file paths
     agyfind show N [-n LINES] [--no-pager] [--no-rich]
                                   show details of summary entry N (content is limited to LINES lines)
@@ -72,6 +75,7 @@ HISTORY_JSONL = Path.home() / ".gemini" / "antigravity-cli" / "history.jsonl"
 # Japan has no DST, so JST is represented as a fixed offset without relying on tzdata
 JST = timezone(timedelta(hours=9))
 STAMP_WIDTH = 20  # "YYYY/MM/DD HH:mm:SS "
+SUMMARY_COUNT = 20  # default number of entries shown by `summary`
 # Directly under brain are per-conversation UUID directories. This pattern is
 # used to exclude any other directories/files.
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -371,6 +375,9 @@ def main() -> int:
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("directory", nargs="?", default=None, help="filter by workspace directory (e.g. ~/repos/opencode)")
+        if name == "summary":
+            p.add_argument("-n", dest="count", type=int, default=SUMMARY_COUNT, help=f"number of entries to show (default: {SUMMARY_COUNT})")
+            p.add_argument("-a", "--all", action="store_true", help="show all entries")
 
     p = sub.add_parser("show", help="show entry details (head of content)")
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
@@ -421,6 +428,12 @@ def main() -> int:
             and (ws == dir_filter or ws.startswith(dir_filter + "/"))
         ]
         show_ws = any(workspaces.get(e[2].relative_to(BASE_DIR).parts[0], "") != dir_filter for _, e in indexed_entries)
+
+    # Limit the number of summary lines (after filtering, so -n counts the
+    # displayed entries). Indices still refer to the full list
+    total = len(indexed_entries)
+    if args.command == "summary" and not args.all:
+        indexed_entries = indexed_entries[: max(0, args.count)]
 
     # When displaying the workspace, compute the max display width up front
     # so columns line up across all rows
@@ -521,6 +534,10 @@ def main() -> int:
                 print(f"{i:>{num_width}d}. {stamp} {body}")
             else:
                 print(shorten_home(str(p)))
+        if len(indexed_entries) < total:
+            # Print to stdout after the list so it appears in order; it is
+            # not an entry line, so it has no index
+            print(f"... showing {len(indexed_entries)} of {total} (use -n COUNT or -a to show more)")
     except BrokenPipeError:
         # Happens when the pipe is closed early, e.g. by `| head`.
         # Redirect stdout to devnull to avoid a second BrokenPipeError on
