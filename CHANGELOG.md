@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-22
+
 ### Added
 
 - `agyfind search [-e] [-d DIRECTORY] PATTERN...` searches summaries and contents for entries containing every `PATTERN` (case-insensitive keywords, or regular expressions with `-e`/`--regexp`) and prints the matching lines like `grep -n`, as `N:LINE:text` with the entry number of `agyfind summary` (the summary is line 0). `-d`/`--directory` filters by working directory.
