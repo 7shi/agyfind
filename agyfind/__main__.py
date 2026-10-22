@@ -538,6 +538,9 @@ def main() -> int:
             # Print to stdout after the list so it appears in order; it is
             # not an entry line, so it has no index
             print(f"... showing {len(indexed_entries)} of {total} (use -n COUNT or -a to show more)")
+        # Flush here so a closed pipe is caught below; output that fits in
+        # the buffer would otherwise only be written at interpreter shutdown
+        sys.stdout.flush()
     except BrokenPipeError:
         # Happens when the pipe is closed early, e.g. by `| head`.
         # Redirect stdout to devnull to avoid a second BrokenPipeError on

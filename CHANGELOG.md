@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `agyfind summary` now shows only the latest 20 entries by default. Use `-n COUNT` to change the number, or `-a`/`--all` to show all entries. Index numbers still refer to the full list, so they remain valid for `agyfind show N`. When entries are omitted, the number of shown entries and the total are printed on the last line.
 
+### Fixed
+
+- `agyfind summary` and `agyfind ls` no longer print a `BrokenPipeError` message when the output is piped into a command that exits early (e.g. `| head -1`) and the whole output fits in the stdout buffer.
+
 ## [0.6.0] - 2026-09-27
 
 ### Added
