@@ -14,6 +14,9 @@ Usage:
                                   (the latest 20 by default; -n sets the count, -a shows all)
                                   (if entries are omitted, the shown and total counts are printed)
     agyfind ls [DIRECTORY]        list artifact file paths
+    agyfind search [-e] [-d DIRECTORY] PATTERN...
+                                  print matching lines like grep as "N:LINE:text"
+                                  (keywords, or regular expressions with -e)
     agyfind show N [-n LINES] [--no-pager] [--no-rich]
                                   show details of summary entry N (content is limited to LINES lines)
     agyfind copy N [-n LINES] [--show] [--zenn]
@@ -38,7 +41,15 @@ WARNING).
 If DIRECTORY is given, only conversations belonging to that working
 directory (the ~/... part of a summary line) are shown. In that case the
 workspace is omitted from summary lines (since it would be identical on
-every line).
+every line). `search` takes the directory as -d/--directory instead.
+
+`search` prints matching lines like `grep -n`, but with the entry number of
+`summary` in place of the file name: "N:LINE:text". The summary is searched
+as well and is shown as line 0. Each PATTERN is a case-insensitive keyword by
+default; with -e/--regexp, each is a regular expression (also
+case-insensitive). An entry matches when every PATTERN is found in its
+summary or its content, and then every line matching any PATTERN is printed.
+When stdout is a terminal, the output is colored with grep's default colors.
 
 Sources of information:
     - brain/<UUID>/<file>.metadata.json ... summary
@@ -364,6 +375,52 @@ def show_rich(header: list[str], lines: list[str], force_terminal: bool = False)
     return capture.get()
 
 
+def search(indexed_entries: list[tuple[int, tuple[datetime, str, Path]]], patterns: list[str], regexp: bool) -> int:
+    # Print matching lines like `grep -n`, with the entry number in place of
+    # the file name. The summary is shown as line 0, i.e. before the content.
+    # An entry is shown only when every pattern is found somewhere in it
+    # (summary or content); then every line matching any pattern is printed.
+    # Keywords are escaped so both modes share the same matching code
+    try:
+        regexes = [re.compile(pat if regexp else re.escape(pat), re.IGNORECASE) for pat in patterns]
+    except re.error as exc:
+        print(f"agyfind: invalid regular expression: {exc}", file=sys.stderr)
+        return 1
+    # Combined pattern to find (and highlight) the matches of any pattern
+    # in a line. Each is wrapped in a group so alternation can't leak
+    any_re = re.compile("|".join(f"(?:{r.pattern})" for r in regexes), re.IGNORECASE)
+    # grep's default GREP_COLORS: fn=35 (here the entry number), ln=32, se=36, mt=01;31
+    color = sys.stdout.isatty()
+
+    def paint(code: str, s: str) -> str:
+        return f"\033[{code}m{s}\033[m" if color else s
+
+    sep = paint("36", ":")
+    found = False
+    try:
+        for i, (_, summary, path) in indexed_entries:
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                text = ""
+            if not all(r.search(summary) or r.search(text) for r in regexes):
+                continue
+            found = True
+            for ln, line in enumerate([summary, *text.splitlines()]):
+                if not any_re.search(line):
+                    continue
+                if color:
+                    # Skip empty matches (e.g. from "x*"), which grep doesn't highlight
+                    line = any_re.sub(lambda m: paint("01;31", m[0]) if m[0] else "", line)
+                print(f"{paint('35', str(i))}{sep}{paint('32', str(ln))}{sep}{line}")
+        # Flush here so a closed pipe is caught below (see main())
+        sys.stdout.flush()
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    # Like grep, exit with 1 when nothing matched
+    return 0 if found else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="agyfind", description="find files in Antigravity CLI artifacts")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -378,6 +435,11 @@ def main() -> int:
         if name == "summary":
             p.add_argument("-n", dest="count", type=int, default=SUMMARY_COUNT, help=f"number of entries to show (default: {SUMMARY_COUNT})")
             p.add_argument("-a", "--all", action="store_true", help="show all entries")
+
+    p = sub.add_parser("search", help="search summaries and contents (output like grep -n)")
+    p.add_argument("patterns", nargs="+", metavar="PATTERN", help="keyword (all must match, case-insensitive)")
+    p.add_argument("-e", "--regexp", action="store_true", help="treat PATTERNs as regular expressions")
+    p.add_argument("-d", "--directory", default=None, help="filter by workspace directory (e.g. ~/repos/opencode)")
 
     p = sub.add_parser("show", help="show entry details (head of content)")
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
@@ -420,7 +482,7 @@ def main() -> int:
     # values differ per line), show it everywhere for clarity.
     # This is a single flag for the whole output rather than toggled per line
     show_ws = True
-    if args.command in ("summary", "ls") and args.directory:
+    if args.command in ("summary", "ls", "search") and args.directory:
         dir_filter = str(Path(args.directory).expanduser().resolve())
         indexed_entries = [
             (i, e) for i, e in indexed_entries
@@ -428,6 +490,9 @@ def main() -> int:
             and (ws == dir_filter or ws.startswith(dir_filter + "/"))
         ]
         show_ws = any(workspaces.get(e[2].relative_to(BASE_DIR).parts[0], "") != dir_filter for _, e in indexed_entries)
+
+    if args.command == "search":
+        return search(indexed_entries, args.patterns, args.regexp)
 
     # Limit the number of summary lines (after filtering, so -n counts the
     # displayed entries). Indices still refer to the full list

@@ -48,6 +48,11 @@ agyfind summary ~/repos/opencode
 # List artifact file paths
 agyfind ls [DIRECTORY]
 
+# Search summaries and contents, printing matching lines like grep as "N:LINE:text"
+agyfind search KEYWORD...
+agyfind search -e REGEX...
+agyfind search -d ~/repos/opencode KEYWORD...
+
 # Show details of summary entry N (content limited to LINES lines, default all)
 agyfind show N [-n LINES] [--no-pager] [--no-rich]
 
@@ -66,6 +71,8 @@ Pass `--no-pager` to print directly without the pager; rich then decides whether
 `agyfind summary` shows the latest 20 entries by default. Use `-n COUNT` to change the number, or `-a`/`--all` to show every entry. The limit is applied after the `DIRECTORY` filter, so it counts the displayed lines. When some entries are not shown, a last line such as `... showing 20 of 56 (use -n COUNT or -a to show more)` tells how many are shown out of the total.
 
 If `DIRECTORY` is given, only conversations belonging to that working directory (the `~/...` part of a summary line) are shown. In that case the workspace is omitted from summary lines, since it would be identical on every line.
+
+`agyfind search` prints matching lines like `grep -n`, but with the entry number of `agyfind summary` in place of the file name, as `N:LINE:text` (so `N` can be passed to `agyfind show N`). The summary is searched as well and is shown as line 0. Each `PATTERN` is a case-insensitive keyword by default; with `-e`/`--regexp`, each is a (case-insensitive) Python regular expression. An entry is shown only when every `PATTERN` is found in its summary or content, and then every line matching any `PATTERN` is printed. Use `-d`/`--directory DIRECTORY` to filter by working directory as with `agyfind summary DIRECTORY`. When stdout is a terminal, the output is colored with grep's default colors. Like grep, the exit status is 1 when nothing matched.
 
 Entries are always sorted by the artifact file's mtime (converted to JST) in descending order. The index number shown by `agyfind summary` corresponds to this order, so it can be passed directly to `agyfind show N`.
 
