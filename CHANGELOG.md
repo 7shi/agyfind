@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-09
+
 ### Changed
 
 - `agyfind show` now renders Markdown with [leaf](https://github.com/rivolink/leaf) instead of rich, using leaf's built-in pager (TUI) when stdout is a terminal and `leaf --inline` otherwise (or with `--no-pager`). The header is shown as a table (leaf's front matter rendering). If leaf is not installed, the plain text output of `--no-leaf` is used.
