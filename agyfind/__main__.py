@@ -17,18 +17,20 @@ Usage:
     agyfind search [-e] [-d DIRECTORY] PATTERN...
                                   print matching lines like grep as "N:LINE:text"
                                   (keywords, or regular expressions with -e)
-    agyfind show N [-n LINES] [--no-pager] [--no-rich]
+    agyfind show N [-n LINES] [--no-pager] [--no-leaf]
                                   show details of summary entry N (content is limited to LINES lines)
     agyfind copy N [-n LINES] [--show] [--zenn]
                                   copy the content of entry N to the clipboard
 
-`show` renders the content as Markdown with rich and, like `git show`, pipes
-it through a pager ($PAGER, or less by default) when stdout is a terminal.
-When paging, colors are always emitted. Use --no-pager to print directly
-(rich then decides whether to use colors); this is implied when stdout is
-piped or redirected. Use --no-rich to print plain text.
+`show` renders the content as Markdown with leaf
+(https://github.com/rivolink/leaf), which also serves as the pager when
+stdout is a terminal. Use --no-pager to print directly with `leaf --inline`
+(leaf then decides whether to use colors); this is implied when stdout is
+piped or redirected. Use --no-leaf to print plain text, which is paged
+through $PAGER (less by default) like `git show`; this is also the fallback
+when leaf is not installed.
 
-`copy` puts the content shown by `show --no-rich` (without the header, and
+`copy` puts the content shown by `show --no-leaf` (without the header, and
 with trailing whitespace stripped) on the clipboard via wl-copy (pyperclip is
 unreliable in some environments). Local links (file:///...) pointing into a
 git repository with a GitHub remote are rewritten to the corresponding GitHub
@@ -345,34 +347,18 @@ def load_entries() -> list[tuple[datetime, str, Path]]:
     return entries
 
 
-def show_rich(header: list[str], lines: list[str], force_terminal: bool = False) -> str | None:
-    # Render the header and content with rich. With force_terminal, the
-    # output is captured and returned as a string (with ANSI colors) instead
-    # of being printed.
-    # Imported lazily so the plain commands don't pay rich's import cost
-    from rich.console import Console
-    from rich.markdown import Markdown
-    from rich.rule import Rule
-
-    console = Console(force_terminal=True) if force_terminal else Console()
-    # The "---" delimiters are drawn as rules styled like a Markdown
-    # horizontal rule. The header lines between them are printed as is
-    #hr = Rule(style="markdown.hr", characters="-")
-    hr = Rule(style="markdown.hr")
-
-    def render() -> None:
-        console.print(hr)
-        console.out("\n".join(header), highlight=False)
-        console.print(hr)
-        console.print()
-        console.print(Markdown("\n".join(lines)))
-
-    if not force_terminal:
-        render()
-        return None
-    with console.capture() as capture:
-        render()
-    return capture.get()
+def show_leaf(text: str, inline: bool) -> None:
+    # Render Markdown with leaf (https://github.com/rivolink/leaf). The "---"
+    # header is passed as is, since leaf renders front matter as a table.
+    # Without inline, leaf's own TUI pager is used (it reads keys from the
+    # terminal even though stdin is a pipe); with inline, the output is
+    # printed directly and leaf decides whether to use colors
+    cmd = ["leaf", "--inline"] if inline else ["leaf"]
+    sys.stdout.flush()
+    try:
+        subprocess.run(cmd, input=text.encode("utf-8"), check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"leaf failed with exit status {exc.returncode}") from exc
 
 
 def search(indexed_entries: list[tuple[int, tuple[datetime, str, Path]]], patterns: list[str], regexp: bool) -> int:
@@ -445,7 +431,7 @@ def main() -> int:
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
     p.add_argument("-n", dest="lines", type=int, default=None, help="number of content lines (default: all)")
     p.add_argument("--no-pager", action="store_true", help="do not pipe output into a pager")
-    p.add_argument("--no-rich", action="store_true", help="print plain text instead of rendering Markdown with rich")
+    p.add_argument("--no-leaf", action="store_true", help="print plain text instead of rendering Markdown with leaf")
 
     p = sub.add_parser("copy", help="copy entry details to the clipboard (file:// links become GitHub URLs)")
     p.add_argument("index", type=int, help="entry number shown by summary (1-based)")
@@ -561,23 +547,22 @@ def main() -> int:
             return 0
         # Like git, don't page when stdout is piped or redirected
         no_pager = args.no_pager or not sys.stdout.isatty()
+        out.extend(lines)
+        output = "\n".join(out) + "\n"
         try:
-            if args.no_rich:
-                out.extend(lines)
-                output = "\n".join(out) + "\n"
+            if args.no_leaf or not shutil.which("leaf"):
+                # Fall back to plain text when leaf is not installed
                 if no_pager:
                     sys.stdout.write(output)
                 else:
                     page(output)
-            elif no_pager:
-                # Print directly with rich, letting it detect the terminal
-                show_rich(header, lines)
             else:
-                # Render with rich into a string with colors forced on, and
-                # hand it to the pager (less -R shows them)
-                page(show_rich(header, lines, force_terminal=True))
+                show_leaf(output, inline=no_pager)
         except BrokenPipeError:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except RuntimeError as exc:
+            print(f"agyfind: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     try:

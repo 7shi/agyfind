@@ -7,6 +7,7 @@ Artifacts are stored under the `brain` directory, in one UUID-named directory pe
 ## Requirements
 
 - Python 3.10 or higher
+- [leaf](https://github.com/rivolink/leaf) (optional) — Markdown rendering and paging in `agyfind show`; without it, plain text is shown as with `--no-leaf`
 - An existing `~/.gemini/antigravity-cli` directory (created by the Antigravity CLI)
 
 ## Installation
@@ -54,19 +55,19 @@ agyfind search -e REGEX...
 agyfind search -d ~/repos/opencode KEYWORD...
 
 # Show details of summary entry N (content limited to LINES lines, default all)
-agyfind show N [-n LINES] [--no-pager] [--no-rich]
+agyfind show N [-n LINES] [--no-pager] [--no-leaf]
 
 # Copy the content of entry N to the clipboard
 agyfind copy N [-n LINES] [--show] [--zenn]
 ```
 
-`agyfind show` prints a header of `key: value` lines (`path`, `updated`, `workspace`, `summary`) enclosed in `---`, followed by the content. The content is rendered as Markdown with rich, and the `---` delimiters are drawn as rules. Pass `--no-rich` to print the raw content as plain text instead.
+`agyfind show` prints a header of `key: value` lines (`path`, `updated`, `workspace`, `summary`) enclosed in `---`, followed by the content. The output is rendered as Markdown with leaf, and the header is drawn as a table. When stdout is a terminal, leaf's built-in pager (its TUI) is used to view it.
 
-Like `git show`, `agyfind show` pipes its output through a pager when stdout is a terminal, with colors always emitted. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager and colors are shown. Set `PAGER=cat` to disable the pager (colors are still emitted).
+Pass `--no-pager` to print directly with `leaf --inline`; leaf then decides whether to use colors. `--no-pager` is implied when stdout is piped or redirected (e.g. `agyfind show 1 | less`), so the output is still rendered with leaf but contains no color codes.
 
-Pass `--no-pager` to print directly without the pager; rich then decides whether to use colors. `--no-pager` is implied when stdout is piped or redirected (e.g. `agyfind show 1 | less`), so the output is still rendered with rich but contains no color codes. Use `--no-rich` to get the raw content there (e.g. for `grep`).
+Pass `--no-leaf` to print the raw content as plain text instead (e.g. for `grep`); this is also the fallback when leaf is not installed. Like `git show`, the plain text is piped through a pager when stdout is a terminal. The pager is taken from `$PAGER` (default `less`); if `LESS` is unset, it is set to `FRX` so short output is printed without entering the pager. Set `PAGER=cat` to disable the pager.
 
-`agyfind copy` puts the content shown by `agyfind show --no-rich`, without the `---` header and with trailing blank lines stripped, on the clipboard using `wl-copy` (it must be installed; pyperclip is not used because it is unreliable in some environments). Local links (`file:///...`) that point into a git repository with a GitHub remote are rewritten to GitHub web URLs such as `https://github.com/OWNER/REPO/blob/BRANCH/path#L10-L20`, so the text can be shared as is. `origin` is preferred when several remotes point to GitHub. `BRANCH` is the branch currently checked out in that repository, which is assumed to have been pushed (in detached HEAD state, `HEAD`, i.e. the default branch, is used instead). Other `file:///` links are removed, keeping only the link text (e.g. `[models.json](file:///home/USER/.cache/models.json)` becomes `models.json`), since they are meaningless outside your machine; bare `file:///` URLs that are not links are left unchanged. Pass `--show` to also print the copied text (through the pager when stdout is a terminal) to check the rewritten links. Pass `--zenn` to convert GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, etc.) to Zenn's `:::message` blocks (`:::message alert` for `WARNING`).
+`agyfind copy` puts the content shown by `agyfind show --no-leaf`, without the `---` header and with trailing blank lines stripped, on the clipboard using `wl-copy` (it must be installed; pyperclip is not used because it is unreliable in some environments). Local links (`file:///...`) that point into a git repository with a GitHub remote are rewritten to GitHub web URLs such as `https://github.com/OWNER/REPO/blob/BRANCH/path#L10-L20`, so the text can be shared as is. `origin` is preferred when several remotes point to GitHub. `BRANCH` is the branch currently checked out in that repository, which is assumed to have been pushed (in detached HEAD state, `HEAD`, i.e. the default branch, is used instead). Other `file:///` links are removed, keeping only the link text (e.g. `[models.json](file:///home/USER/.cache/models.json)` becomes `models.json`), since they are meaningless outside your machine; bare `file:///` URLs that are not links are left unchanged. Pass `--show` to also print the copied text (through the pager when stdout is a terminal) to check the rewritten links. Pass `--zenn` to convert GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, etc.) to Zenn's `:::message` blocks (`:::message alert` for `WARNING`).
 
 `agyfind summary` shows the latest 20 entries by default. Use `-n COUNT` to change the number, or `-a`/`--all` to show every entry. The limit is applied after the `DIRECTORY` filter, so it counts the displayed lines. When some entries are not shown, a last line such as `... showing 20 of 56 (use -n COUNT or -a to show more)` tells how many are shown out of the total.
 
